@@ -41,16 +41,21 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
-    env:
-      CDMBOT_NO_PATH_UPDATE: '1'
-      UV_INSTALL_DIR: ${{ runner.temp }}/cdmbot-uv
-      UV_TOOL_DIR: ${{ runner.temp }}/cdmbot-tools
-      UV_TOOL_BIN_DIR: ${{ runner.temp }}/cdmbot-bin
     steps:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - if: runner.os == 'Windows'
-        run: powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
-      - if: runner.os != 'Windows'
-        run: sh ./install.sh
+      - name: Install CDMBot
+        shell: pwsh
+        env:
+          CDMBOT_NO_PATH_UPDATE: '1'
+          UV_INSTALL_DIR: ${{ runner.temp }}/cdmbot-uv
+          UV_TOOL_DIR: ${{ runner.temp }}/cdmbot-tools
+          UV_TOOL_BIN_DIR: ${{ runner.temp }}/cdmbot-bin
+        run: |
+          if ($env:RUNNER_OS -eq 'Windows') {
+            powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
+          } else {
+            sh ./install.sh
+          }
+          exit $LASTEXITCODE
