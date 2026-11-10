@@ -1,0 +1,14 @@
+version: 1
+architecture: cdm8
+build:
+  harness: harness.asm
+  sources: [../lib/delta.asm]
+defaults:
+  preserve_registers: [sp]
+cases:
+  regular:
+    setup: {registers: {r0: 40}}
+    expect: {registers: {r0: 42, r2: 0}}
+  zero:
+    setup: {registers: {r0: 254}}
+    expect: {registers: {r0: 0, r2: 1}}

@@ -1,0 +1,56 @@
+name: CI
+
+on: [push, pull_request]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ['3.10', '3.12']
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python }}
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '17'
+      - run: python -m pip install build
+      - run: python -m build
+      - run: python -m pip install dist/*.whl
+        shell: bash
+      - run: python -m unittest discover -s tests -v
+      - run: cdmbot examples/cdm8/add.asm examples/cdm8/add.yaml
+      - run: cdmbot examples/cdm16/add.asm examples/cdm16/add.yaml --jobs 2
+      - run: cdmbot project examples/project/project.yaml --junit project-report.xml
+
+  install:
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    env:
+      CDMBOT_NO_PATH_UPDATE: '1'
+      UV_INSTALL_DIR: ${{ runner.temp }}/cdmbot-uv
+      UV_TOOL_DIR: ${{ runner.temp }}/cdmbot-tools
+      UV_TOOL_BIN_DIR: ${{ runner.temp }}/cdmbot-bin
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - if: runner.os == 'Windows'
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
+      - if: runner.os != 'Windows'
+        run: sh ./install.sh

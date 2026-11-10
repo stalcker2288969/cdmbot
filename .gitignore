@@ -1,0 +1,14 @@
+/.local-deps/
+/.venv/
+/build/
+/dist/
+/examples/logisim/
+/project-report.xml
+/report.xml
+/report.json
+*.egg-info/
+__pycache__/
+*.py[cod]
+*.class
+
+.fake

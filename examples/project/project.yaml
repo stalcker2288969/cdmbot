@@ -1,0 +1,18 @@
+version: 1
+source_roots: [lib]
+suites:
+  increment:
+    program: lib/increment.asm
+    suite: tests/increment.yaml
+syntax:
+  cdm8:
+    architecture: cdm8
+    directories: [lib]
+    files: [tests/harness.asm]
+structure:
+  directories: [lib, tests]
+  files: [tests/increment.yaml]
+thresholds:
+  file_percent: 66
+  line_percent: 100
+  comment_percent: 9

@@ -1,0 +1,33 @@
+version: 1
+architecture: cdm8
+defaults:
+  run:
+    max_steps: 10
+  setup:
+    registers: {r2: 0x55, sp: 0xf0}
+    memory: {0x80: [0x12, 0x34]}
+  preserve_registers: [r1, r2, sp]
+  allowed_register_changes: [r0]
+  preserve_memory:
+    - {address: 0x80, length: 2}
+cases:
+  simple:
+    setup:
+      registers: {r0: 10, r1: 32}
+    expect:
+      registers: {r0: 42}
+      flags: {c: 0, z: 0}
+  wrap:
+    setup:
+      registers: {r0: 255, r1: 1}
+    expect:
+      registers: {r0: 0}
+      flags: {c: 1, z: 1}
+  before_halt:
+    run:
+      until: {pc: 1}
+    setup:
+      registers: {r0: 127, r1: 1}
+    expect:
+      registers: {r0: 128, pc: 1}
+      flags: {n: 1, v: 1}

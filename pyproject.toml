@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cdmbot"
+version = "0.1.0"
+description = "YAML-driven assembly tests for CdM-8 and CdM-16"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+dependencies = ["cdm-devkit==0.2.3", "PyYAML>=6.0.1,<7"]
+
+[project.optional-dependencies]
+managed-java = ["cjdk==0.5.0"]
+
+[project.scripts]
+cdmbot = "cdmbot.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+cdmbot = ["*.java"]

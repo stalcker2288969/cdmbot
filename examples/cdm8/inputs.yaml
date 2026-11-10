@@ -1,0 +1,11 @@
+version: 1
+architecture: cdm8
+cases:
+  stack_and_labels:
+    setup:
+      stack: [7, 3]
+      input:
+        start_label: 10
+        text_label: "тест"
+    expect:
+      registers: {r0: 17, r2: 0xd1, r3: 3, sp: 0}

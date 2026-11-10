@@ -1,0 +1,31 @@
+version: 1
+architecture: cdm16
+defaults:
+  run:
+    max_steps: 10
+  setup:
+    registers: {fp: 0x55aa, sp: 0xfffe}
+  preserve_registers: [r1, fp, sp]
+  allowed_register_changes: [r0]
+cases:
+  simple:
+    setup:
+      registers: {r0: 0x1200, r1: 0x34}
+    expect:
+      registers: {r0: 0x1234}
+      flags: {c: 0, z: 0}
+  wrap:
+    setup:
+      registers: {r0: 0xffff, r1: 1}
+    expect:
+      registers: {r0: 0}
+      flags: {c: 1, z: 1}
+  direct_entry:
+    run:
+      entry: 0x80
+      until: {pc: 0x82}
+    setup:
+      registers: {r0: 0x7fff, r1: 1}
+    expect:
+      registers: {r0: 0x8000, pc: 0x82}
+      flags: {n: 1, v: 1}
