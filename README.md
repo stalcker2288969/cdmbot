@@ -1,5 +1,7 @@
 # CDMBot
 
+Version 0.2.0 adds create, build, run, analyze, test, and pub commands while retaining the legacy test CLI. See [development tools and packages](docs/development.md) for the new workflow.
+
 [![CI](https://github.com/stalcker2288969/cdmbot/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/stalcker2288969/cdmbot/actions/workflows/ci.yml)
 
 Фреймворк для модульных тестов ассемблерных программ на **CdM-8 Mark 5** и **CdM-16**. На вход подаются программа и набор сценариев в YAML. CDMBot собирает программу один раз через Cocas и запускает каждый сценарий с отдельным состоянием процессора и памяти.

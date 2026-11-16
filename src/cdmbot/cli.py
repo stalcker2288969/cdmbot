@@ -33,7 +33,7 @@ def project_main(argv: list[str]) -> int:
 def suite_main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(
         prog="cdmbot", description="Assemble a CdM program and test it against a YAML suite.",
-        epilog="Use cdmbot project --help for project checks and coverage.",
+        epilog="Development: cdmbot create/build/run/analyze/pub --help. Use cdmbot project --help for legacy project checks and coverage.",
     )
     parser.add_argument("program", type=Path, help="assembly source, library or prebuilt .bin image")
     parser.add_argument("suite", type=Path, help="YAML suite")
@@ -60,6 +60,12 @@ def suite_main(argv: list[str]) -> int:
 def main(argv: list[str] | None = None) -> int:
     arguments = sys.argv[1:] if argv is None else argv
     try:
+        if arguments and arguments[0] in ('create', 'init', 'build', 'run', 'analyze', 'test', 'pub', 'capabilities'):
+            from .developer import main as developer_main
+            return developer_main(arguments)
+        if arguments == ['--version']:
+            print('cdmbot 0.2.0')
+            return 0
         if arguments and arguments[0] == "project":
             return project_main(arguments[1:])
         return suite_main(arguments)

@@ -25,7 +25,7 @@ def _require_files(paths: tuple[Path, ...]) -> None:
             raise TestError(f"Input file does not exist: {path}")
 
 
-def _run_cocas(command: list[str], architecture: Architecture, args: list[str], cwd: Path) -> None:
+def _run_cocas(command: list[str], architecture: Architecture, args: list[str], cwd: Path, *, strict=False) -> None:
     try:
         process = subprocess.run(
             [sys.executable, "-m", *command, "-t", architecture, *args],
@@ -35,20 +35,29 @@ def _run_cocas(command: list[str], architecture: Architecture, args: list[str], 
         )
     except subprocess.TimeoutExpired as exc:
         raise TestError("Cocas build exceeded 30 seconds") from exc
-    if process.returncode:
-        diagnostic = ANSI_ESCAPE.sub("", process.stderr + process.stdout).strip()
+    diagnostic = ANSI_ESCAPE.sub("", process.stderr + process.stdout).strip()
+    if process.returncode or re.search(r'(?m)^\[[^\]]+\]\s+ERROR\b', diagnostic) or (strict and re.search(r'(?m)^line \d+:\d+\s', diagnostic)):
         raise TestError(f"Cocas build failed:\n{diagnostic or f'exit code {process.returncode}'}")
 
 
-def check_syntax(architecture: Architecture, files: tuple[Path, ...]) -> None:
+def check_syntax(architecture: Architecture, files: tuple[Path, ...], *, strict=False) -> None:
     _require_files(files)
     with tempfile.TemporaryDirectory(prefix="cdmbot-syntax-") as directory:
-        _run_cocas(["cocas.main"], architecture, ["-c", *map(str, files)], Path(directory))
+        _run_cocas(["cocas.main"], architecture, ["-c", *map(str, files)], Path(directory), strict=strict)
 
 
 def build_program(program: Path, suite: Suite, labels: set[str], *, debug: bool = False) -> Build:
     program = program.resolve()
     paths = (program, *suite.sources)
+    if program.suffix.lower() in ('.asm', '.cdm8', '.cdm16', '.cocoasm'):
+        from .workspace import workspace, resolve_sources, package_directory
+        from .packages import verify
+        package_root = next((directory for directory in program.parents if (directory / 'cdm-packages.json').is_file()), None)
+        if package_root:
+            root, _, config, _ = workspace(program)
+            verify(package_root, suite.architecture)
+            linked = resolve_sources(root, program, config)
+            paths = tuple(dict.fromkeys((*paths, *linked)))
     if suite.harness is not None:
         paths = (suite.harness, *paths)
     if len(set(paths)) != len(paths):
