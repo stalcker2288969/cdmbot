@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cdmbot"
-version = "0.2.0"
+version = "0.2.1"
 description = "CdM development tools: projects, analysis, builds, execution, tests and packages"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -22,4 +22,4 @@ cdmbot = "cdmbot.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-cdmbot = ["*.java", "data/*.json", "data/packages/*/*.json", "data/packages/*/*.asm", "data/packages/*/*.md"]
+cdmbot = ["*.java", "data/*.json", "data/registry/packages/*/*.json", "data/packages/*/*.json", "data/packages/*/*.asm", "data/packages/*/*.md"]

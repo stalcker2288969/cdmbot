@@ -6,6 +6,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import time
 import urllib.request
 from contextlib import contextmanager
 from pathlib import Path
@@ -14,7 +15,40 @@ from .model import TestError
 from .workspace import confined, read_json
 
 NAME = re.compile(r'[a-z][a-z0-9_-]{0,63}$')
-INDEX = str(Path(__file__).with_name('data') / 'registry.json')
+INDEX = 'https://github.com/stalcker2288969/cdmbot.git'
+BUNDLED_INDEX = Path(__file__).with_name('data') / 'registry'
+
+
+class Catalog(dict):
+    def __init__(self, entries, location, warning=''):
+        super().__init__(entries)
+        self.location, self.warning = location, warning
+
+
+def directory_registry(directory):
+    directory = Path(directory)
+    cards = sorted((directory / 'packages').glob('*/package.json'))
+    if not cards:
+        raise TestError('Registry needs packages/<name>/package.json cards')
+    entries = {}
+    for file in cards:
+        card = read_json(confined(directory, file))
+        name = card.get('name', file.parent.name)
+        if not NAME.fullmatch(name) or name != file.parent.name:
+            raise TestError(f'Invalid registry package name: {file}')
+        source = card.get('source', card)
+        if not isinstance(source, dict) or not ('git' in source or 'builtin' in source):
+            raise TestError(f'{name}: registry card needs a package source')
+        entries[name] = card
+    return entries
+
+
+def registry_source(name, location=None):
+    card = registry(location).get(name)
+    if not card:
+        raise TestError(f'Package {name} was not found in the registry')
+    source = card.get('source', card)
+    return {key: value for key, value in source.items() if key in ('git', 'ref', 'subdir', 'builtin')}
 
 
 def save(path, value):
@@ -25,7 +59,35 @@ def save(path, value):
 
 
 def registry(location=None):
-    location = location or os.environ.get('CDMBOT_REGISTRY') or INDEX
+    explicit = location or os.environ.get('CDMBOT_REGISTRY')
+    location = str(explicit or INDEX)
+    if Path(location).is_dir():
+        directory = Path(location)
+        if (directory / 'registry/packages').is_dir():
+            directory /= 'registry'
+        return Catalog(directory_registry(directory), location)
+    if location.startswith('https://') and location.endswith('.git'):
+        base = Path(os.environ.get('CDMBOT_CACHE_DIR') or os.environ.get('LOCALAPPDATA') or
+                    os.environ.get('XDG_CACHE_HOME') or Path.home() / '.cache') / 'cdmbot/registries'
+        cache = base / (hashlib.sha256(location.encode()).hexdigest() + '.json')
+        cached = read_json(cache) if cache.is_file() else None
+        if cached and time.time() - cache.stat().st_mtime < 300:
+            return Catalog(cached['packages'], location)
+        try:
+            with tempfile.TemporaryDirectory(prefix='cdmbot-registry-') as temp:
+                destination = Path(temp) / 'registry'
+                git(['clone', '--depth', '1', '--filter=blob:none', '--sparse', '--', location, str(destination)])
+                git(['sparse-checkout', 'set', 'registry', 'packages'], destination)
+                directory = destination / 'registry' if (destination / 'registry/packages').is_dir() else destination
+                entries = directory_registry(directory)
+            save(cache, {'version': 1, 'packages': entries})
+            return Catalog(entries, location)
+        except (TestError, OSError, ValueError) as exc:
+            if cached:
+                return Catalog(cached['packages'], location, f'Using cached package catalog: {exc}')
+            if explicit:
+                raise
+            return Catalog(directory_registry(BUNDLED_INDEX), location, f'Using bundled package catalog: {exc}')
     if location.startswith('https://'):
         with urllib.request.urlopen(location, timeout=30) as response:
             data = response.read(1024 * 1024 + 1)
@@ -36,7 +98,7 @@ def registry(location=None):
         result = read_json(Path(location))
     if not isinstance(result, dict) or not isinstance(result.get('packages'), dict):
         raise TestError('Registry must contain a packages object')
-    return result['packages']
+    return Catalog(result['packages'], location)
 
 
 def git(args, cwd=None):
@@ -146,14 +208,17 @@ def copy_package(spec, destination, target, locked, directory, commit):
 
 
 def dependencies(root):
-    path = root / 'cdm-packages.json'
+    library = root / 'cdm-package.json'
+    path = library if library.is_file() and not (root / 'cdm-project.json').is_file() else root / 'cdm-packages.json'
     data = read_json(path) if path.is_file() else {'version': 1, 'dependencies': {}}
-    if data.get('version') != 1 or not isinstance(data.get('dependencies'), dict):
+    if path == library:
+        data.setdefault('dependencies', {})
+    if (path != library and data.get('version') != 1) or not isinstance(data.get('dependencies'), dict):
         raise TestError('Invalid cdm-packages.json')
     return path, data
 
 
-def _restore(root, target, update=False, changed=None, refresh=()):
+def _restore(root, target, update=False, changed=None, refresh=(), registry_location=None):
     path, data = dependencies(root)
     data = changed or data
     lock_path = root / 'cdm-packages.lock.json'
@@ -168,6 +233,9 @@ def _restore(root, target, update=False, changed=None, refresh=()):
         specifications = {}
         while pending:
             name, spec, ancestors = pending.pop(0)
+            if spec == '*':
+                previous = old.get(name)
+                spec = previous['source'] if previous and not update and name not in refresh else registry_source(name, registry_location)
             if not NAME.fullmatch(name) or not isinstance(spec, dict):
                 raise TestError('Invalid dependency name or source')
             if name in ancestors:
@@ -183,7 +251,7 @@ def _restore(root, target, update=False, changed=None, refresh=()):
             installed = parent / name
             if locked and installed.is_dir():
                 if digest(installed) != locked.get('files'):
-                    raise TestError(f'{name}: installed sources have changed; remove the cache and restore the lock')
+                    raise TestError(f'{name}: installed sources are modified; remove the cache and restore the lock')
                 if target not in locked.get('targets', []):
                     raise TestError(f'{name}: incompatible processor')
                 result[name] = locked
@@ -243,9 +311,66 @@ def operation_lock(root):
         path.unlink(missing_ok=True)
 
 
-def restore(root, target, update=False, changed=None, refresh=()):
+def restore(root, target, update=False, changed=None, refresh=(), registry_location=None, expected=None):
     with operation_lock(root):
-        return _restore(root, target, update, changed, refresh)
+        if expected is not None and dependencies(root)[1] != expected:
+            raise TestError('Dependencies changed during this operation; retry the package command')
+        return _restore(root, target, update, changed, refresh, registry_location)
+
+
+def ensure_imports(root, entry, config, registry_location=None):
+    """Discover package includes on explicit build/run/restore, preserving existing locks."""
+    from .workspace import INCLUDE, package_directory
+    package_root = package_directory(root, entry)
+    _, initial = dependencies(package_root)
+    if initial['dependencies']:
+        restore(package_root, config['target'], registry_location=registry_location)
+    for _ in range(100):
+        _, data = dependencies(package_root)
+        lock_file = package_root / 'cdm-packages.lock.json'
+        locked = read_json(lock_file).get('packages', {}) if lock_file.is_file() else {}
+        unknown, visited = set(), set()
+
+        def scan(file):
+            file = confined(root, file)
+            if file in visited or not file.is_file():
+                return
+            visited.add(file)
+            if file.suffix.lower() not in ('.asm', '.mlb', '.cdm8', '.cdm8e', '.cdm16', '.cdm16e', '.cocoasm'):
+                return
+            for line in file.read_text(encoding='utf-8-sig').splitlines():
+                match = INCLUDE.match(line)
+                if not match:
+                    continue
+                name = match[1].replace('\\', '/')
+                if name.startswith('@'):
+                    package, separator, relative = name[1:].partition('/')
+                    if not NAME.fullmatch(package) or not separator:
+                        raise TestError('Package imports use @name/path.asm')
+                    if package not in locked:
+                        unknown.add(package)
+                        continue
+                    base = package_root / '.cdm/packages' / package
+                    dependency = confined(base, base / relative)
+                else:
+                    dependency = confined(root, file.parent / name)
+                if name.endswith('/*'):
+                    for child in sorted(dependency.parent.glob('*')):
+                        scan(child)
+                else:
+                    scan(dependency)
+
+        scan(entry)
+        for extra in config.get('extraSources', []):
+            scan(root / extra)
+        if not unknown:
+            return
+        previous = json.loads(json.dumps(data))
+        for name in sorted(unknown):
+            if name not in data['dependencies']:
+                data['dependencies'][name] = '*'
+        restore(package_root, config['target'], changed=data, registry_location=registry_location, expected=previous)
+    raise TestError('Package include discovery exceeds 100 rounds')
 
 
 def verify(root, target=None):
@@ -265,7 +390,7 @@ def verify(root, target=None):
         if not NAME.fullmatch(name):
             raise TestError('Invalid dependency name')
         directory = root / '.cdm/packages' / name
-        if name not in lock or lock[name].get('source') != spec or not directory.is_dir() or digest(directory) != lock[name].get('files'):
+        if name not in lock or (spec != '*' and lock[name].get('source') != spec) or not directory.is_dir() or digest(directory) != lock[name].get('files'):
             raise TestError(f'{name}: dependency missing or modified; run cdmbot pub get')
         if target and target not in lock[name].get('targets', []):
             raise TestError(f'{name}: incompatible processor {target}')

@@ -1,6 +1,6 @@
 # CDMBot
 
-Version 0.2.0 adds create, build, run, analyze, test, and pub commands while retaining the legacy test CLI. See [development tools and packages](docs/development.md) for the new workflow.
+Version 0.2.1 adds create, build, run, analyze, test, and pub commands while retaining the legacy test CLI. See [development tools and packages](docs/development.md) for the new workflow.
 
 [![CI](https://github.com/stalcker2288969/cdmbot/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/stalcker2288969/cdmbot/actions/workflows/ci.yml)
 

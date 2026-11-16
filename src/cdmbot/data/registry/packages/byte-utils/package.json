@@ -1,0 +1,16 @@
+{
+  "name": "byte-utils",
+  "version": "0.1.0",
+  "description": "Byte arithmetic helpers for CdM-8",
+  "publisher": {
+    "name": "CocoVS Community",
+    "description": "Starter libraries maintained with CocoVS and cdmbot",
+    "url": "https://github.com/stalcker2288969/cdmbot"
+  },
+  "targets": [
+    "cdm8"
+  ],
+  "source": {
+    "builtin": "byte-utils"
+  }
+}

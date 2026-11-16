@@ -1,0 +1,14 @@
+{
+  "entry": "src/main.asm",
+  "sources": {
+    "cdm8": "asect 0\nmain:\n    setsp 0xF0\n    ldi r0, 42\n    halt\nend\n",
+    "cdm8e": "asect 0\nmain:\n    setsp 0xF0\n    ldi r0, 42\n    halt\nend\n",
+    "cdm16": "asect 0\n    dc main, 0\nasect 0x0200\nmain:\n    ldi r7, 0x8000\n    stsp r7\n    ldi r0, 42\n    halt\nend\n",
+    "cdm16e": "asect 0\n    dc main, 0\nasect 0x0200\nmain:\n    ldi r7, 0x8000\n    stsp r7\n    ldi r0, 42\n    halt\nend\n",
+    "custom": ""
+  },
+  "readme": "# {{name}}\n\nCdM assembly project.\n\n```sh\ncdmbot build\ncdmbot run\ncdmbot test\n```\n",
+  "gitignore": "build/\n.cdm/\n",
+  "testProject": "version: 1\nsource_roots: [src]\nsuites:\n  smoke:\n    program: src/main.asm\n    suite: tests.yaml\n",
+  "testSuite": "version: 1\narchitecture: {{target}}\nmemory_model: {{memory}}\ncases:\n  returns_42:\n    run: {until: halt, max_steps: 100}\n    expect:\n      registers: {r0: 42}\n"
+}

@@ -15,8 +15,8 @@ from .runner import run_report
 from .workspace import TARGETS, workspace, resolve_sources, package_directory, confined
 from . import packages
 
-CAPABILITIES = {'api': 1, 'version': '0.2.0', 'commands': ['create', 'build', 'run', 'analyze', 'test', 'pub'],
-                'package_format': 1, 'project_format': 'cdm-project.json'}
+CAPABILITIES = {'api': 1, 'version': '0.2.1', 'commands': ['create', 'build', 'run', 'analyze', 'test', 'pub'],
+                'package_format': 1, 'project_format': 'cdm-project.json', 'automatic_packages': True}
 
 
 def create(directory, target, architecture, library=False):
@@ -28,25 +28,24 @@ def create(directory, target, architecture, library=False):
         name = root.name.lower().replace(' ', '-')
         if not packages.NAME.fullmatch(name):
             raise TestError('Use a lowercase package name such as my-library')
-        packages.save(root / 'cdm-package.json', {'version': '0.1.0', 'name': name,
+        packages.save(root / 'cdm-package.json', {'version': '0.1.0', 'name': name, 'description': '', 'publisher': '',
                       'targets': [target], 'files': ['lib.asm', 'README.md']})
         source = 'rsect library\n\n# @param r0 Input\n# @return r0 Input plus one\n# @changed PS Flags\nincrement>\n    inc r0\n    rts\nend\n'
         entry = root / 'lib.asm'
     else:
-        packages.save(root / 'cdm-project.json', {'entry': 'src/main.asm', 'target': target, 'architecture': architecture,
-                                                'environment': 'emulator', 'extraSources': []})
-        source = ('asect 0\n    dc main, 0\nasect 0x0200\nmain:\n    ldi r7, 0x8000\n    stsp r7\n'
-                  if target.startswith('cdm16') else 'asect 0\nmain:\n    setsp 0xF0\n')
-        source += '    ldi r0, 42\n    halt\nend\n'
+        template = packages.read_json(Path(__file__).with_name('data') / 'project-template.json')
+        packages.save(root / 'cdm-project.json', {'entry': template['entry'], 'target': target, 'architecture': architecture,
+                                                'environment': 'external' if target.endswith('e') else 'emulator', 'extraSources': []})
+        source = template['sources'][target]
         (root / 'src').mkdir()
         entry = root / 'src/main.asm'
         if target in ('cdm8', 'cdm16'):
-            (root / 'project.yaml').write_text('version: 1\nsource_roots: [src]\nsuites:\n  smoke:\n    program: src/main.asm\n    suite: tests.yaml\n', encoding='utf-8')
-            (root / 'tests.yaml').write_text('version: 1\narchitecture: ' + target + '\nmemory_model: ' +
-                ('unified' if architecture == 'vonNeumann' else 'harvard') +
-                '\ncases:\n  returns_42:\n    run: {until: halt, max_steps: 100}\n    expect:\n      registers: {r0: 42}\n', encoding='utf-8')
+            (root / 'project.yaml').write_text(template['testProject'], encoding='utf-8')
+            (root / 'tests.yaml').write_text(template['testSuite'].replace('{{target}}', target).replace('{{memory}}',
+                'unified' if architecture == 'vonNeumann' else 'harvard'), encoding='utf-8')
     entry.write_text(source, encoding='utf-8')
-    (root / 'README.md').write_text('# ' + root.name + '\n\nCreated with cdmbot.\n', encoding='utf-8')
+    readme = '# ' + root.name + '\n\nAssembly library. Declare public files and dependencies in cdm-package.json.\n' if library else template['readme'].replace('{{name}}', root.name)
+    (root / 'README.md').write_text(readme, encoding='utf-8')
     (root / '.gitignore').write_text('build/\n.cdm/\n', encoding='utf-8')
     return {'passed': True, 'root': str(root), 'entry': str(entry)}
 
@@ -56,6 +55,7 @@ def build(value, target=None, architecture=None, output=None, name=None, workspa
     if workspace_root and not project:
         root = Path(workspace_root).resolve()
         confined(root, entry)
+    packages.ensure_imports(root, entry, config)
     packages.verify(package_directory(root, entry), config['target'])
     sources = resolve_sources(root, entry, config)
     destination = Path(output).resolve() if output else (root if project else entry.parent) / 'build'
@@ -193,7 +193,7 @@ def parser():
             command.add_argument('--git')
             command.add_argument('--ref', default='main')
             command.add_argument('--subdir', default='.')
-        if name in ('add', 'search'):
+        if name in ('add', 'search', 'get', 'update'):
             command.add_argument('--registry')
         if name == 'search':
             command.add_argument('query', nargs='?', default='')
@@ -229,8 +229,10 @@ def execute(options):
     if options.command == 'analyze':
         return analyze(options.path, options.target, options.architecture, not options.no_syntax, options.workspace)
     if options.operation == 'search':
-        return {'passed': True, 'packages': {name: spec for name, spec in packages.registry(options.registry).items()
-                                            if options.query.lower() in name.lower()}}
+        catalog = packages.registry(options.registry)
+        return {'passed': True, 'packages': {name: spec for name, spec in catalog.items()
+                    if options.query.casefold() in (' '.join([name, str(spec.get('description', '')), str(spec.get('publisher', ''))])).casefold()},
+                'registry': catalog.location, 'warning': catalog.warning}
     if options.operation == 'publish':
         if '://' in options.registry:
             raise TestError('Publish to a local clone of the registry index, then submit its Git change')
@@ -241,26 +243,46 @@ def execute(options):
             if entry['name'] != manifest['name'] or entry['version'] != manifest['version']:
                 raise TestError('The remote Git ref does not match the local package name/version')
         index = Path(options.registry).resolve()
-        data = packages.read_json(index) if index.exists() else {'version': 1, 'packages': {}}
-        data['packages'][manifest['name']] = spec
-        packages.save(index, data)
+        data = packages.read_json(index) if index.is_file() else {'version': 1, 'packages': {}}
+        card = {'name': manifest['name'], 'version': manifest['version'], 'description': manifest.get('description', ''),
+                'publisher': manifest.get('publisher', ''), 'targets': manifest['targets'], 'source': spec}
+        if index.suffix == '.json':
+            data['packages'][manifest['name']] = card
+            packages.save(index, data)
+        else:
+            packages.save(index / 'packages' / manifest['name'] / 'package.json', card)
         return {'passed': True, 'registry': str(index), 'package': manifest['name'], 'commit': entry['commit']}
-    root, _, config, _ = workspace(options.path, options.target, boundary=options.workspace)
+    location = Path(options.path).resolve()
+    if location.is_dir() and (location / 'cdm-package.json').is_file() and not (location / 'cdm-project.json').is_file():
+        root = location
+        config = {'target': options.target or packages.read_json(root / 'cdm-package.json')['targets'][0]}
+        entry = None
+    else:
+        root, entry, config, _ = workspace(options.path, options.target, boundary=options.workspace)
     _, data = packages.dependencies(root)
+    previous = json.loads(json.dumps(data))
     if options.operation == 'list':
         return {'passed': True, 'dependencies': data['dependencies']}
     if options.operation == 'add':
         name = options.name or options.package
-        spec = {'git': options.git, 'ref': options.ref, 'subdir': options.subdir} if options.git else packages.registry(options.registry).get(options.package)
-        if not spec:
-            raise TestError('Package not found; supply --git URL or a registry entry')
+        if options.git:
+            spec = {'git': options.git, 'ref': options.ref, 'subdir': options.subdir}
+        else:
+            packages.registry_source(options.package, options.registry)
+            spec = '*'
         data['dependencies'][name] = spec
     if options.operation == 'remove':
         if options.package not in data['dependencies']:
             raise TestError('Package is not a direct dependency')
         del data['dependencies'][options.package]
+    if options.operation == 'get' and entry:
+        source_root = Path(options.workspace).resolve() if options.workspace else root
+        packages.ensure_imports(source_root, entry, config, options.registry)
+        root = package_directory(source_root, entry)
+        _, data = packages.dependencies(root)
+        previous = json.loads(json.dumps(data))
     result = packages.restore(root, config['target'], update=options.operation == 'update', changed=data,
-                              refresh=(name,) if options.operation == 'add' else ())
+                              refresh=(name,) if options.operation == 'add' else (), registry_location=getattr(options, 'registry', None), expected=previous)
     return {'passed': True, 'packages': result}
 
 

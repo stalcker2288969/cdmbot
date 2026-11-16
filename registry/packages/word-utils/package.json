@@ -1,0 +1,16 @@
+{
+  "name": "word-utils",
+  "version": "0.1.0",
+  "description": "Word arithmetic helpers for CdM-16",
+  "publisher": {
+    "name": "CocoVS Community",
+    "description": "Starter libraries maintained with CocoVS and cdmbot",
+    "url": "https://github.com/stalcker2288969/cdmbot"
+  },
+  "targets": [
+    "cdm16"
+  ],
+  "source": {
+    "builtin": "word-utils"
+  }
+}

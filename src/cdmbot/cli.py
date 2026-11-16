@@ -64,7 +64,7 @@ def main(argv: list[str] | None = None) -> int:
             from .developer import main as developer_main
             return developer_main(arguments)
         if arguments == ['--version']:
-            print('cdmbot 0.2.0')
+            print('cdmbot 0.2.1')
             return 0
         if arguments and arguments[0] == "project":
             return project_main(arguments[1:])

@@ -1,7 +1,0 @@
-{
-  "version": 1,
-  "packages": {
-    "byte-utils": {"builtin": "byte-utils"},
-    "word-utils": {"builtin": "word-utils"}
-  }
-}

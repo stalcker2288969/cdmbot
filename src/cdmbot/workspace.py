@@ -57,7 +57,7 @@ def workspace(value='.', target=None, architecture=None, boundary=None):
 
 def package_directory(root, entry):
     return next((directory for directory in entry.parents if directory.is_relative_to(root) and
-                 (directory / 'cdm-packages.json').is_file()), root)
+                 (directory / 'cdm-packages.json').is_file()), root if (root / 'cdm-project.json').is_file() else entry.parent)
 
 
 def resolve_sources(root, entry, config):

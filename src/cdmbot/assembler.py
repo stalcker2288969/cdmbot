@@ -51,13 +51,12 @@ def build_program(program: Path, suite: Suite, labels: set[str], *, debug: bool 
     paths = (program, *suite.sources)
     if program.suffix.lower() in ('.asm', '.cdm8', '.cdm16', '.cocoasm'):
         from .workspace import workspace, resolve_sources, package_directory
-        from .packages import verify
-        package_root = next((directory for directory in program.parents if (directory / 'cdm-packages.json').is_file()), None)
-        if package_root:
-            root, _, config, _ = workspace(program)
-            verify(package_root, suite.architecture)
-            linked = resolve_sources(root, program, config)
-            paths = tuple(dict.fromkeys((*paths, *linked)))
+        from .packages import ensure_imports, verify
+        root, _, config, _ = workspace(program, suite.architecture)
+        ensure_imports(root, program, config)
+        verify(package_directory(root, program), suite.architecture)
+        linked = resolve_sources(root, program, config)
+        paths = tuple(dict.fromkeys((*paths, *linked)))
     if suite.harness is not None:
         paths = (suite.harness, *paths)
     if len(set(paths)) != len(paths):

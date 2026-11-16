@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 import tempfile
 import unittest
@@ -112,6 +113,17 @@ class DeveloperTests(unittest.TestCase):
         file.write_text('asect 0\nldi r0, 7\nhalt\nend\n')
         self.assertEqual(Path(build(file)['artifacts']['image']).parent, directory / 'build')
 
+    def test_editor_standalone_auto_packages_stay_beside_the_source(self):
+        directory = self.root / 'sorting'
+        directory.mkdir()
+        file = directory / 'sort.asm'
+        file.write_text('# @include "@byte-utils/lib.asm"\nbyte_increment: ext\nasect 0\nsetsp 240\nldi r0, 41\njsr byte_increment\nhalt\nend\n')
+        result = build(file, target='cdm8', workspace_root=self.root)
+        self.assertEqual(Path(result['artifacts']['image']).parent, directory / 'build')
+        self.assertTrue((directory / 'cdm-packages.json').is_file())
+        self.assertTrue((directory / '.cdm/packages/byte-utils/lib.asm').is_file())
+        self.assertFalse((self.root / 'cdm-packages.json').exists())
+
     def test_editor_boundary_does_not_adopt_a_parent_project(self):
         app = self.root / 'parent'
         create(app, 'cdm16', 'vonNeumann')
@@ -186,6 +198,79 @@ class DeveloperTests(unittest.TestCase):
         result = execute(parser().parse_args(['pub', 'remove', 'math', '--path', str(app)]))
         self.assertEqual(result['packages'], {})
         self.assertEqual(packages.read_json(app / 'cdm-packages.lock.json')['packages'], {})
+
+    def test_folder_catalog_publishes_metadata_and_searches_publishers(self):
+        lib = self.repository('math')
+        manifest = packages.read_json(lib / 'cdm-package.json')
+        manifest.update(description='Arithmetic for students', publisher='Example author')
+        packages.save(lib / 'cdm-package.json', manifest)
+        self.commit(lib)
+        catalog = self.root / 'catalog'
+        execute(parser().parse_args(['pub', 'publish', str(lib), '--git', str(lib), '--ref', 'main', '--registry', str(catalog)]))
+        card = packages.read_json(catalog / 'packages/math/package.json')
+        self.assertEqual(card['publisher'], 'Example author')
+        for term in ['students', 'author', 'math']:
+            result = execute(parser().parse_args(['pub', 'search', term, '--registry', str(catalog)]))
+            self.assertIn('math', result['packages'])
+
+    def test_includes_automatically_install_and_lock_git_packages_for_projects_and_standalone(self):
+        child = self.repository('child')
+        lib = self.repository('math', {'child': '*'})
+        catalog = self.root / 'catalog'
+        for name, repository in [('math', lib), ('child', child)]:
+            packages.save(catalog / 'packages' / name / 'package.json', {'name': name, 'description': 'Test package',
+                          'publisher': 'Tests', 'source': {'git': str(repository), 'ref': 'main'}})
+        with patch.dict(os.environ, {'CDMBOT_REGISTRY': str(catalog)}):
+            for project in [True, False]:
+                app = self.root / str(project)
+                if project:
+                    create(app, 'cdm8', 'vonNeumann')
+                    source = app / 'src/main.asm'
+                else:
+                    app.mkdir()
+                    source = app / 'demo.asm'
+                source.write_text('# @include "@math/lib.asm"\nincrement: ext\nasect 0\nsetsp 240\nldi r0, 41\njsr increment\nhalt\nend\n')
+                self.assertEqual(run(source)['registers']['r0'], 42)
+                lock = packages.read_json(app / 'cdm-packages.lock.json')
+                self.assertEqual(set(lock['packages']), {'math', 'child'})
+                with patch('cdmbot.packages.registry', side_effect=AssertionError('Locked builds must work offline')):
+                    self.assertEqual(run(source)['registers']['r0'], 42)
+                self.assertEqual(packages.read_json(app / 'cdm-packages.lock.json'), lock)
+
+    def test_add_by_name_works_inside_a_library(self):
+        library = self.root / 'library'
+        create(library, 'cdm8', 'vonNeumann', True)
+        result = execute(parser().parse_args(['pub', 'add', 'byte-utils', '--path', str(library)]))
+        self.assertIn('byte-utils', result['packages'])
+        self.assertIn('byte-utils', packages.read_json(library / 'cdm-package.json')['dependencies'])
+        self.assertFalse((library / 'cdm-packages.json').exists())
+
+    def test_remote_catalog_snapshot_and_offline_fallback(self):
+        source = Path(__file__).parents[1] / 'registry'
+        def clone(args, cwd=None):
+            if args[0] == 'clone':
+                import shutil
+                shutil.copytree(source, Path(args[-1]) / 'registry')
+        with patch.dict(os.environ, {'CDMBOT_CACHE_DIR': str(self.root / 'cache'), 'CDMBOT_REGISTRY': ''}):
+            with patch('cdmbot.packages.git', side_effect=clone):
+                self.assertIn('byte-utils', packages.registry())
+            with patch('cdmbot.packages.git', side_effect=AssertionError('Use the cached snapshot')):
+                self.assertIn('byte-utils', packages.registry())
+        with patch.dict(os.environ, {'CDMBOT_CACHE_DIR': str(self.root / 'empty-cache'), 'CDMBOT_REGISTRY': ''}):
+            with patch('cdmbot.packages.git', side_effect=TestError('Offline')):
+                catalog = packages.registry()
+                self.assertIn('byte-utils', catalog)
+                self.assertIn('bundled', catalog.warning)
+
+    def test_concurrent_manifest_edit_is_preserved(self):
+        app = self.root / 'consumer'
+        create(app, 'cdm8', 'vonNeumann')
+        previous = {'version': 1, 'dependencies': {}}
+        current = {'version': 1, 'dependencies': {'byte-utils': '*'}}
+        packages.save(app / 'cdm-packages.json', current)
+        with self.assertRaisesRegex(TestError, 'changed during'):
+            packages.restore(app, 'cdm8', changed=previous, expected=previous)
+        self.assertEqual(packages.read_json(app / 'cdm-packages.json'), current)
 
     def test_publication_failure_restores_previous_artifacts(self):
         import os
