@@ -1,0 +1,14 @@
+{
+  "name": "memoryze8",
+  "version": "0.1.0",
+  "description": "Byte memory, stack-slot and pointer macros for CdM-8",
+  "publisher": "stalcker2288969",
+  "targets": [
+    "cdm8"
+  ],
+  "source": {
+    "git": "https://github.com/stalcker2288969/MemoryzeCDM.git",
+    "ref": "main",
+    "subdir": "memoryze8"
+  }
+}

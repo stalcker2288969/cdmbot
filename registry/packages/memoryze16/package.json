@@ -1,0 +1,14 @@
+{
+  "name": "memoryze16",
+  "version": "0.1.0",
+  "description": "Word memory, stack-slot and pointer macros for CdM-16",
+  "publisher": "stalcker2288969",
+  "targets": [
+    "cdm16"
+  ],
+  "source": {
+    "git": "https://github.com/stalcker2288969/MemoryzeCDM.git",
+    "ref": "main",
+    "subdir": "memoryze16"
+  }
+}
