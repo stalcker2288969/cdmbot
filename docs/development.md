@@ -1,6 +1,6 @@
 # cdmbot as a development tool
 
-cdmbot 0.2.1 provides project creation, builds, execution, analysis and source packages alongside the existing YAML test runner. CocoVS integrates this CLI through a versioned JSON capability API. Existing `cdmbot program.asm tests.yaml` and `cdmbot project project.yaml` commands remain supported.
+cdmbot 0.2.3 provides project creation, builds, execution, analysis and source packages alongside the existing YAML test runner. CocoVS integrates this CLI through a versioned JSON capability API. Existing `cdmbot program.asm tests.yaml` and `cdmbot project project.yaml` commands remain supported.
 
 ## Install from CocoVS
 
@@ -23,11 +23,11 @@ cdmbot run --max-steps 10000
 cdmbot test
 ```
 
-The application template contains `cdm-project.json`, `src/main.asm`, a smoke suite and `project.yaml`. **CocoVS: Initialize Project** uses the same baseline template and processor startup instructions. Initialization preserves existing entry files and documentation. Smoke assertions are generated for the new executable template. `cdmbot create` requires an empty destination.
+The application template contains `cdm-project.json`, `src/main.asm`, a smoke suite and `project.yaml`. **CocoVS: Create or Initialize Project** uses the same baseline template and processor startup instructions. Initialization preserves existing entry files and documentation. Smoke assertions are generated for the new executable template. `cdmbot create` and its `init` alias preserve existing entry files, manifests and documentation.
 
 `cdmbot create my-lib --library --target cdm8` creates `cdm-package.json`, `lib.asm`, and documentation. `cdm-project.json` describes an executable's entry and execution settings. `cdm-package.json` describes a reusable library's identity, processors, public files and dependencies.
 
-**CocoVS: Create cdmbot Project** asks for a parent folder, project name, application/library type, processor and memory architecture, then offers to open the new folder.
+**CocoVS: Create or Initialize Project** selects an existing folder or a parent folder for a new project, then asks for application/library type, processor and memory architecture. Its former command IDs route to this same flow and are hidden from the Command Palette. Both CocoVS and cdmbot use the shared application and library templates. CocoVS creation works before installing cdmbot.
 
 Standalone files need no project:
 
@@ -85,11 +85,29 @@ cdmbot pub remove my-lib
 
 Replace the URL and ref with a real repository and tag/branch. Local Git repository paths are supported for development. `--subdir path` selects a package inside a larger Git repository. Git must be installed for Git-backed packages. No package installation scripts are executed.
 
-Dependencies are recorded in `cdm-packages.json`, exact Git commits and file SHA-256 hashes in `cdm-packages.lock.json`, and installed source files in `.cdm/packages/`. Commit both manifests and ignore `.cdm/`. `pub get` restores the lock without upgrading. `pub update` resolves current catalog entries for named dependencies and newer commits for direct Git refs. Package validation completes before replacing installed sources. Modified sources require restoring a clean cache.
+Application settings and dependencies are recorded together in `cdm-project.json`. Exact Git commits and file SHA-256 hashes are recorded in `cdm-packages.lock.json`, and installed source files in `.cdm/packages/`. Commit the project manifest and lock file and ignore `.cdm/`. An existing `cdm-packages.json` is merged into the project manifest and removed after a successful restore, update or package add/remove. The migration preserves the current lock and unrelated project settings. Conflicting declarations require resolving the dependency in the two manifests. A failed restore preserves both files. Standalone files without a project use `cdm-packages.json`, and library projects keep dependencies in `cdm-package.json`. `pub get` restores the lock without upgrading. `pub update` resolves current catalog entries for named dependencies and newer commits for direct Git refs. Package validation completes before replacing installed sources. Modified sources require restoring a clean cache.
 
 To select a new release tag, re-add that dependency with its new `--ref`; unrelated package locks are retained. Use `--target cdm16` when managing packages for a plain standalone `.asm` file whose processor cannot be inferred from its name.
 
-The same dependency files work with standalone sources and multi-file projects. Add `--path path/to/file.asm` or `--path path/to/project` to package commands when not running from a project folder. Includes use the package root associated with that source/project. Both new builds and legacy YAML tests can link these imports.
+Package commands support standalone sources and multi-file projects. Add `--path path/to/file.asm` or `--path path/to/project` to package commands when not running from a project folder. Includes use the package root associated with that source/project. Both new builds and legacy YAML tests can link these imports.
+
+## Assembly compatibility
+
+`languageVersion` identifies the assembly compatibility profile shared by CocoVS and cdmbot. Profile `1.0` supports CoCAS 0.2.3 with the current template and package integration. This is the toolchain's dialect version. Processor selection uses `target` or a library's `targets`, and package release versions use their own `version` field.
+
+```json
+{
+  "entry": "src/main.asm",
+  "target": "cdm16",
+  "architecture": "vonNeumann",
+  "languageVersion": "1.0",
+  "dependencies": {
+    "memoryze16": "*"
+  }
+}
+```
+
+Applications, standalone dependency manifests and libraries can declare `languageVersion`. Existing manifests without it use profile `1.0`. This release supports `1.0` and rejects unsupported project profiles before building. Direct and transitive dependencies must match the project's profile. Restore, cached builds and the native CocoVS backend check compatibility. Language compatibility is independent of the target and the exact package revision pinned in the lock file.
 
 ## Create and publish a library
 
@@ -102,6 +120,7 @@ Its `cdm-package.json` declares the package name, version, supported processors 
 ```json
 {
   "name": "my-lib",
+  "languageVersion": "1.0",
   "version": "0.1.0",
   "description": "Small arithmetic helpers",
   "publisher": "Your name",
@@ -144,6 +163,7 @@ An example `package.json` card follows. Replace the example URL with the library
 ```json
 {
   "name": "my-lib",
+  "languageVersion": "1.0",
   "version": "0.1.0",
   "description": "Small arithmetic helpers",
   "publisher": "Your name",
@@ -163,3 +183,7 @@ Use `--registry` with a local catalog directory or an HTTPS Git repository URL e
 - Source analysis does not replace the Testing view's assertions or coverage reports.
 - CdM-8 and CdM-16 local execution use cdmbot's existing CPU backends; extended targets can be assembled but require their matching execution/debug tools.
 - Custom processor runners continue to use CocoVS's existing custom build path.
+
+## Structure templates
+
+CoCAS templates expose `Name._` as the byte size and `Name.field` as a field offset. cdmbot 0.2.2 resolves these constants before instruction and storage encoding, including negative frame allocations such as `addsp -Name._` and static reservations such as `instance: ds Name._`. Each module defines its own templates. CdM-16 word fields and stack allocations use even alignment.

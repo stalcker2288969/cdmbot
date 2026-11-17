@@ -4,6 +4,7 @@ import re
 from pathlib import Path
 
 from .model import TestError
+from .language import language_version
 
 INCLUDE = re.compile(r'^\s*#\s*@include\s+["\']([^"\']+)["\']\s*(?:#.*)?$')
 TARGETS = ('cdm8', 'cdm8e', 'cdm16', 'cdm16e')
@@ -52,12 +53,14 @@ def workspace(value='.', target=None, architecture=None, boundary=None):
         raise TestError('Unsupported processor or memory architecture')
     if not isinstance(config.get('extraSources', []), list):
         raise TestError('extraSources must be a list')
+    language_version(config)
     return root, entry, config, bool(manifest and manifest.is_file())
 
 
 def package_directory(root, entry):
     return next((directory for directory in entry.parents if directory.is_relative_to(root) and
-                 (directory / 'cdm-packages.json').is_file()), root if (root / 'cdm-project.json').is_file() else entry.parent)
+                 '.cdm' not in directory.relative_to(root).parts and
+                 any((directory / name).is_file() for name in ('cdm-project.json', 'cdm-package.json', 'cdm-packages.json', 'cdm-packages.lock.json'))), entry.parent)
 
 
 def resolve_sources(root, entry, config):

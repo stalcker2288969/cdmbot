@@ -28,7 +28,7 @@ def _require_files(paths: tuple[Path, ...]) -> None:
 def _run_cocas(command: list[str], architecture: Architecture, args: list[str], cwd: Path, *, strict=False) -> None:
     try:
         process = subprocess.run(
-            [sys.executable, "-m", *command, "-t", architecture, *args],
+            [sys.executable, "-m", "cdmbot.cocas_compat", *command, "-t", architecture, *args],
             capture_output=True, encoding="utf-8", errors="replace",
             env={**environ, "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"},
             timeout=30, check=False, cwd=cwd,

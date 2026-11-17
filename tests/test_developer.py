@@ -22,8 +22,9 @@ class DeveloperTests(unittest.TestCase):
     def test_create_build_run_analyze_and_no_overwrite(self):
         app = self.root / 'app'
         create(app, 'cdm8', 'vonNeumann')
-        with self.assertRaises(TestError):
-            create(app, 'cdm8', 'vonNeumann')
+        original = (app / 'src/main.asm').read_bytes()
+        create(app, 'cdm16', 'harvard')
+        self.assertEqual((app / 'src/main.asm').read_bytes(), original)
         result = run(app)
         self.assertTrue(result['passed'])
         self.assertEqual(result['registers']['r0'], 42)
@@ -271,6 +272,97 @@ class DeveloperTests(unittest.TestCase):
         with self.assertRaisesRegex(TestError, 'changed during'):
             packages.restore(app, 'cdm8', changed=previous, expected=previous)
         self.assertEqual(packages.read_json(app / 'cdm-packages.json'), current)
+
+    def test_unified_manifest_migrates_legacy_dependencies_and_preserves_locked_sources(self):
+        app = self.root / 'migration'
+        create(app, 'cdm8', 'vonNeumann')
+        project = app / 'cdm-project.json'
+        config = packages.read_json(project)
+        config['userSetting'] = {'keep': True}
+        packages.save(project, config)
+        legacy = app / 'cdm-packages.json'
+        packages.save(legacy, {'version': 1, 'dependencies': {'byte-utils': {'builtin': 'byte-utils'}}})
+        installed = packages.restore(app, 'cdm8')
+        self.assertFalse(legacy.exists())
+        merged = packages.read_json(project)
+        self.assertEqual(merged['userSetting'], config['userSetting'])
+        self.assertEqual(merged['entry'], config['entry'])
+        self.assertIn('byte-utils', merged['dependencies'])
+        with patch('cdmbot.packages.fetch', side_effect=AssertionError('Use the locked installation')):
+            self.assertEqual(packages.restore(app, 'cdm8'), installed)
+        packages.verify(app, 'cdm8')
+
+    def test_failed_migration_and_conflicting_manifests_preserve_files(self):
+        app = self.root / 'migration'
+        create(app, 'cdm8', 'vonNeumann')
+        project, legacy = app / 'cdm-project.json', app / 'cdm-packages.json'
+        packages.save(legacy, {'version': 1, 'dependencies': {'word-utils': {'builtin': 'word-utils'}}})
+        snapshots = {file: file.read_bytes() for file in (project, legacy)}
+        with self.assertRaisesRegex(TestError, 'does not support'):
+            packages.restore(app, 'cdm8')
+        for file, original in snapshots.items():
+            self.assertEqual(file.read_bytes(), original)
+        config = packages.read_json(project)
+        config['dependencies'] = {'word-utils': {'git': 'different'}}
+        packages.save(project, config)
+        with self.assertRaisesRegex(TestError, 'conflicting dependencies'):
+            packages.restore(app, 'cdm8')
+
+    def test_language_compatibility_rejects_project_and_transitive_package_versions(self):
+        app = self.root / 'consumer'
+        create(app, 'cdm8', 'vonNeumann')
+        project = app / 'cdm-project.json'
+        config = packages.read_json(project)
+        config['languageVersion'] = '2.0'
+        packages.save(project, config)
+        with self.assertRaisesRegex(TestError, 'Unsupported languageVersion'):
+            build(app)
+        config['languageVersion'] = '1.0'
+        packages.save(project, config)
+        child = self.repository('child')
+        manifest = packages.read_json(child / 'cdm-package.json')
+        manifest['languageVersion'] = '2.0'
+        packages.save(child / 'cdm-package.json', manifest)
+        self.commit(child)
+        parent = self.repository('parent', {'child': {'git': str(child)}})
+        with self.assertRaisesRegex(TestError, 'languageVersion.*incompatible'):
+            packages.restore(app, 'cdm8', changed={'dependencies': {'parent': {'git': str(parent)}}})
+        self.assertEqual(packages.read_json(project), config)
+        self.assertFalse((app / 'cdm-packages.lock.json').exists())
+        self.assertEqual(list((app / '.cdm/packages').iterdir()), [])
+
+    def test_project_edit_during_download_is_preserved(self):
+        app = self.root / 'consumer'
+        create(app, 'cdm8', 'vonNeumann')
+        project = app / 'cdm-project.json'
+        config = packages.read_json(project)
+        changed = {**config, 'dependencies': {'byte-utils': {'builtin': 'byte-utils'}}}
+        original_fetch = packages.fetch
+        def edit_project(*args):
+            config['architecture'] = 'harvard'
+            packages.save(project, config)
+            return original_fetch(*args)
+        with patch('cdmbot.packages.fetch', side_effect=edit_project):
+            with self.assertRaisesRegex(TestError, 'metadata changed'):
+                packages.restore(app, 'cdm8', changed=changed)
+        self.assertEqual(packages.read_json(project), config)
+        self.assertFalse((app / 'cdm-packages.lock.json').exists())
+
+    def test_cached_package_language_is_checked_even_with_valid_locked_hashes(self):
+        app = self.root / 'consumer'
+        create(app, 'cdm8', 'vonNeumann')
+        packages.restore(app, 'cdm8', changed={'dependencies': {'byte-utils': {'builtin': 'byte-utils'}}})
+        directory = app / '.cdm/packages/byte-utils'
+        manifest = packages.read_json(directory / 'cdm-package.json')
+        manifest['languageVersion'] = '2.0'
+        packages.save(directory / 'cdm-package.json', manifest)
+        lock = packages.read_json(app / 'cdm-packages.lock.json')
+        lock['packages']['byte-utils']['files'] = packages.digest(directory)
+        packages.save(app / 'cdm-packages.lock.json', lock)
+        with self.assertRaisesRegex(TestError, 'languageVersion.*incompatible'):
+            packages.verify(app, 'cdm8')
+        with self.assertRaisesRegex(TestError, 'languageVersion.*incompatible'):
+            packages.restore(app, 'cdm8')
 
     def test_publication_failure_restores_previous_artifacts(self):
         import os

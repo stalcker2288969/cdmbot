@@ -13,6 +13,7 @@ from pathlib import Path
 
 from .model import TestError
 from .workspace import confined, read_json
+from .language import LANGUAGE_VERSION, language_version, check_language
 
 NAME = re.compile(r'[a-z][a-z0-9_-]{0,63}$')
 INDEX = 'https://github.com/stalcker2288969/cdmbot.git'
@@ -128,7 +129,7 @@ def digest(directory):
     return result
 
 
-def fetch(spec, destination, target, locked=None):
+def fetch(spec, destination, target, locked=None, language=LANGUAGE_VERSION):
     if 'builtin' in spec:
         name = spec['builtin']
         if not isinstance(name, str) or not NAME.fullmatch(name):
@@ -137,7 +138,7 @@ def fetch(spec, destination, target, locked=None):
         commit = hashlib.sha256(json.dumps(digest(directory), sort_keys=True).encode()).hexdigest()
     else:
         directory, commit = checkout(spec, destination, locked)
-    return copy_package(spec, destination, target, locked, directory, commit)
+    return copy_package(spec, destination, target, locked, directory, commit, language)
 
 
 def checkout(spec, destination, locked):
@@ -166,8 +167,9 @@ def checkout(spec, destination, locked):
     return directory, commit
 
 
-def copy_package(spec, destination, target, locked, directory, commit):
+def copy_package(spec, destination, target, locked, directory, commit, language):
     manifest = read_json(directory / 'cdm-package.json')
+    check_language(manifest, language)
     if not NAME.fullmatch(str(manifest.get('name', ''))):
         raise TestError('Invalid package name')
     targets = manifest.get('targets')
@@ -204,24 +206,42 @@ def copy_package(spec, destination, target, locked, directory, commit):
     if locked and (locked.get('files') != hashes or locked.get('source') != spec):
         raise TestError('Package differs from the locked source; use pub update explicitly')
     return payload, {'source': spec, 'commit': commit, 'version': manifest['version'], 'files': hashes,
-                     'name': manifest['name'], 'dependencies': nested, 'targets': manifest['targets']}
+                     'name': manifest['name'], 'dependencies': nested, 'targets': manifest['targets'],
+                     'languageVersion': manifest.get('languageVersion', LANGUAGE_VERSION)}
 
 
 def dependencies(root):
     library = root / 'cdm-package.json'
-    path = library if library.is_file() and not (root / 'cdm-project.json').is_file() else root / 'cdm-packages.json'
+    project = root / 'cdm-project.json'
+    legacy = root / 'cdm-packages.json'
+    path = project if project.is_file() else library if library.is_file() else legacy
     data = read_json(path) if path.is_file() else {'version': 1, 'dependencies': {}}
-    if path == library:
-        data.setdefault('dependencies', {})
-    if (path != library and data.get('version') != 1) or not isinstance(data.get('dependencies'), dict):
-        raise TestError('Invalid cdm-packages.json')
+    data.setdefault('dependencies', {})
+    if (path == legacy and data.get('version') != 1) or not isinstance(data['dependencies'], dict):
+        raise TestError(f'Invalid dependencies in {path.name}')
+    if path == project and legacy.is_file():
+        previous = read_json(legacy)
+        if previous.get('version') != 1 or not isinstance(previous.get('dependencies'), dict):
+            raise TestError('Invalid cdm-packages.json')
+        for name, spec in previous['dependencies'].items():
+            if name in data['dependencies'] and data['dependencies'][name] != spec:
+                raise TestError(f'{name}: conflicting dependencies in cdm-project.json and cdm-packages.json')
+            data['dependencies'][name] = spec
+    language_version(data)
     return path, data
 
 
 def _restore(root, target, update=False, changed=None, refresh=(), registry_location=None):
     path, data = dependencies(root)
-    data = changed or data
+    if changed is not None:
+        data = {**data, 'dependencies': changed['dependencies']}
+    language = language_version(data)
+    data.setdefault('languageVersion', language)
     lock_path = root / 'cdm-packages.lock.json'
+    legacy = root / 'cdm-packages.json'
+    migrate = path.name == 'cdm-project.json' and legacy.is_file()
+    metadata = {file: file.read_bytes() if file.exists() else None
+                for file in (path, lock_path, legacy)}
     old = read_json(lock_path).get('packages', {}) if lock_path.is_file() else {}
     parent = root / '.cdm/packages'
     parent.mkdir(parents=True, exist_ok=True)
@@ -254,12 +274,13 @@ def _restore(root, target, update=False, changed=None, refresh=(), registry_loca
                     raise TestError(f'{name}: installed sources are modified; remove the cache and restore the lock')
                 if target not in locked.get('targets', []):
                     raise TestError(f'{name}: incompatible processor')
+                check_language(read_json(installed / 'cdm-package.json'), language)
                 result[name] = locked
                 pending.extend((child, source, (*ancestors, name)) for child, source in locked.get('dependencies', {}).items())
                 continue
             work = Path(temp) / name
             work.mkdir()
-            payload, entry = fetch(spec, work / 'repo', target, locked)
+            payload, entry = fetch(spec, work / 'repo', target, locked, language)
             if entry.pop('name') != name:
                 raise TestError(f'{name}: package manifest has a different name')
             result[name] = entry
@@ -270,7 +291,8 @@ def _restore(root, target, update=False, changed=None, refresh=(), registry_loca
             prepared.append((payload, installed))
         # Downloads and validation finish before changing existing installations.
         backups = []
-        metadata = {file: file.read_bytes() if file.exists() else None for file in (path, lock_path)}
+        if any((file.read_bytes() if file.exists() else None) != previous for file, previous in metadata.items()):
+            raise TestError('Project or package metadata changed during this operation; retry the package command')
         try:
             for payload, installed in prepared:
                 backup = Path(temp) / (installed.name + '.previous')
@@ -280,6 +302,8 @@ def _restore(root, target, update=False, changed=None, refresh=(), registry_loca
                 payload.rename(installed)
             save(path, data)
             save(lock_path, {'version': 1, 'packages': result})
+            if migrate:
+                legacy.unlink()
         except BaseException:
             for installed, backup in reversed(backups):
                 if installed.exists():
@@ -377,6 +401,7 @@ def verify(root, target=None):
     if (root / '.cdm/operation.lock').exists():
         raise TestError('A package operation is in progress; retry the build after it finishes')
     _, data = dependencies(root)
+    language = language_version(data)
     if not data['dependencies']:
         return
     lock = read_json(root / 'cdm-packages.lock.json').get('packages', {})
@@ -394,4 +419,5 @@ def verify(root, target=None):
             raise TestError(f'{name}: dependency missing or modified; run cdmbot pub get')
         if target and target not in lock[name].get('targets', []):
             raise TestError(f'{name}: incompatible processor {target}')
+        check_language(read_json(directory / 'cdm-package.json'), language)
         pending.extend(lock[name].get('dependencies', {}).items())

@@ -10,5 +10,7 @@
   "readme": "# {{name}}\n\nCdM assembly project.\n\n```sh\ncdmbot build\ncdmbot run\ncdmbot test\n```\n",
   "gitignore": "build/\n.cdm/\n",
   "testProject": "version: 1\nsource_roots: [src]\nsuites:\n  smoke:\n    program: src/main.asm\n    suite: tests.yaml\n",
-  "testSuite": "version: 1\narchitecture: {{target}}\nmemory_model: {{memory}}\ncases:\n  returns_42:\n    run: {until: halt, max_steps: 100}\n    expect:\n      registers: {r0: 42}\n"
+  "testSuite": "version: 1\narchitecture: {{target}}\nmemory_model: {{memory}}\ncases:\n  returns_42:\n    run: {until: halt, max_steps: 100}\n    expect:\n      registers: {r0: 42}\n",
+  "languageVersion": "1.0",
+  "librarySource": "rsect library\n\n# @param r0 Input\n# @return r0 Input plus one\n# @changed PS Flags\nincrement>\n    inc r0\n    rts\nend\n"
 }

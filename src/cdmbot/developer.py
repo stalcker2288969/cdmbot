@@ -14,39 +14,56 @@ from .model import TestError, Suite
 from .runner import run_report
 from .workspace import TARGETS, workspace, resolve_sources, package_directory, confined
 from . import packages
+from .language import LANGUAGE_VERSION, language_version
 
-CAPABILITIES = {'api': 1, 'version': '0.2.1', 'commands': ['create', 'build', 'run', 'analyze', 'test', 'pub'],
-                'package_format': 1, 'project_format': 'cdm-project.json', 'automatic_packages': True}
+CAPABILITIES = {'api': 1, 'version': '0.2.3', 'commands': ['create', 'build', 'run', 'analyze', 'test', 'pub'],
+                'package_format': 1, 'project_format': 'cdm-project.json', 'automatic_packages': True, 'template_constants': True,
+                'unified_manifest': True, 'language_versions': [LANGUAGE_VERSION]}
 
 
 def create(directory, target, architecture, library=False):
     root = Path(directory).resolve()
-    if root.exists() and any(root.iterdir()):
-        raise TestError('The destination must be empty; existing files will not be overwritten')
     root.mkdir(parents=True, exist_ok=True)
+    project = root / 'cdm-project.json'
+    existing_library = root / 'cdm-package.json'
+    if project.is_file() or existing_library.is_file():
+        manifest = packages.read_json(project if project.is_file() else existing_library)
+        return {'passed': True, 'root': str(root), 'entry': str(root / manifest.get('entry', 'lib.asm'))}
+    template = packages.read_json(Path(__file__).with_name('data') / 'project-template.json')
+    files = {'.gitignore': template['gitignore']}
     if library:
         name = root.name.lower().replace(' ', '-')
         if not packages.NAME.fullmatch(name):
             raise TestError('Use a lowercase package name such as my-library')
-        packages.save(root / 'cdm-package.json', {'version': '0.1.0', 'name': name, 'description': '', 'publisher': '',
-                      'targets': [target], 'files': ['lib.asm', 'README.md']})
-        source = 'rsect library\n\n# @param r0 Input\n# @return r0 Input plus one\n# @changed PS Flags\nincrement>\n    inc r0\n    rts\nend\n'
+        config = {'version': '0.1.0', 'name': name, 'description': '', 'publisher': '',
+                  'targets': [target], 'languageVersion': LANGUAGE_VERSION,
+                  'files': ['lib.asm', 'README.md'], 'dependencies': {}}
+        files['cdm-package.json'] = json.dumps(config, indent=2) + '\n'
         entry = root / 'lib.asm'
+        files['lib.asm'] = template['librarySource']
+        files['README.md'] = '# ' + root.name + '\n\nAssembly library. Declare public files and dependencies in cdm-package.json.\n'
     else:
-        template = packages.read_json(Path(__file__).with_name('data') / 'project-template.json')
-        packages.save(root / 'cdm-project.json', {'entry': template['entry'], 'target': target, 'architecture': architecture,
-                                                'environment': 'external' if target.endswith('e') else 'emulator', 'extraSources': []})
-        source = template['sources'][target]
-        (root / 'src').mkdir()
-        entry = root / 'src/main.asm'
-        if target in ('cdm8', 'cdm16'):
-            (root / 'project.yaml').write_text(template['testProject'], encoding='utf-8')
-            (root / 'tests.yaml').write_text(template['testSuite'].replace('{{target}}', target).replace('{{memory}}',
-                'unified' if architecture == 'vonNeumann' else 'harvard'), encoding='utf-8')
-    entry.write_text(source, encoding='utf-8')
-    readme = '# ' + root.name + '\n\nAssembly library. Declare public files and dependencies in cdm-package.json.\n' if library else template['readme'].replace('{{name}}', root.name)
-    (root / 'README.md').write_text(readme, encoding='utf-8')
-    (root / '.gitignore').write_text('build/\n.cdm/\n', encoding='utf-8')
+        existing = next((name for name in (template['entry'], 'main.asm') if (root / name).is_file()), None)
+        config = {'entry': existing or template['entry'], 'target': target, 'architecture': architecture,
+                  'environment': 'external' if target.endswith('e') else 'emulator', 'extraSources': [],
+                  'languageVersion': LANGUAGE_VERSION, 'dependencies': {}}
+        files['cdm-project.json'] = json.dumps(config, indent=2) + '\n'
+        entry = root / config['entry']
+        if not existing:
+            files[config['entry']] = template['sources'][target]
+            if target in ('cdm8', 'cdm16'):
+                files['project.yaml'] = template['testProject']
+                files['tests.yaml'] = template['testSuite'].replace('{{target}}', target).replace('{{memory}}',
+                    'unified' if architecture == 'vonNeumann' else 'harvard')
+        files['README.md'] = template['readme'].replace('{{name}}', root.name)
+    for name, content in files.items():
+        destination = root / name
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            with destination.open('x', encoding='utf-8') as output:
+                output.write(content)
+        except FileExistsError:
+            pass
     return {'passed': True, 'root': str(root), 'entry': str(entry)}
 
 
@@ -245,7 +262,7 @@ def execute(options):
         index = Path(options.registry).resolve()
         data = packages.read_json(index) if index.is_file() else {'version': 1, 'packages': {}}
         card = {'name': manifest['name'], 'version': manifest['version'], 'description': manifest.get('description', ''),
-                'publisher': manifest.get('publisher', ''), 'targets': manifest['targets'], 'source': spec}
+                'publisher': manifest.get('publisher', ''), 'targets': manifest['targets'], 'languageVersion': language_version(manifest), 'source': spec}
         if index.suffix == '.json':
             data['packages'][manifest['name']] = card
             packages.save(index, data)

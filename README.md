@@ -1,6 +1,6 @@
 # CDMBot
 
-Version 0.2.1 adds create, build, run, analyze, test, and pub commands while retaining the legacy test CLI. See [development tools and packages](docs/development.md) for the new workflow.
+Version 0.2.3 adds create, build, run, analyze, test, and pub commands while retaining the legacy test CLI. See [development tools and packages](docs/development.md) for the new workflow.
 
 [![CI](https://github.com/stalcker2288969/cdmbot/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/stalcker2288969/cdmbot/actions/workflows/ci.yml)
 
@@ -189,3 +189,7 @@ python -m build
 ```
 
 GitHub Actions собирает пакет и прогоняет тесты на Windows и Ubuntu. Быстрый установщик проходит отдельную проверку на Windows, Ubuntu и macOS. Лицензия проекта — MIT.
+
+## Project manifests and compatibility
+
+Application settings and dependencies share `cdm-project.json`. Restore migrates legacy `cdm-packages.json` files after successful validation and preserves exact revisions in `cdm-packages.lock.json`. Libraries declare dependencies in `cdm-package.json`. The `languageVersion` field selects the supported assembly compatibility profile, currently `1.0` based on CoCAS 0.2.3. Projects and direct or transitive dependencies are checked before installation and building. `cdmbot create` and `cdmbot init` share the same templates and preserve existing sources.
